@@ -567,16 +567,9 @@ int main(){
             Cf = {1.0f, 0.0f, -0.5f};
             upSpeed = 0.0f; deathBuffer = 240; time = 0.0f; startCounting = true;
         }
-        if(C.x>10.0f && C.x<12.0f && C.y>11.0f && C.y<13.0f && C.z>14.5f && C.z<20.0f)
-            startCounting = false;
-
+        
         handleCameraRotation();
 
-        if(generalDebugMode && logCamVectors) {
-            printf("W: %.2f, R: %.2f, Space: %.2f       SCamera  Position: ", forwardSpeed, rightSpeed, upSpeed);
-            printVector(C);
-            printf("Camera Direction: "); printVector(Cf); printf("\n");
-        }
         timePhysics = (GetTime() - _bt) * 1000.0;
 
         // Assign distances — recalculate when moving or when a forced sort was requested.
@@ -615,18 +608,6 @@ int main(){
                 DrawTriangleLines({float(sv.x4),float(sv.y4)},{float(sv.x5),float(sv.y5)},{float(sv.x6),float(sv.y6)}, bcol);
                 DrawTriangleLines({float(sv.x6),float(sv.y6)},{float(sv.x5),float(sv.y5)},{float(sv.x4),float(sv.y4)}, bcol);
             };
-            /*drawBorderTri({0,  0,  0 }, {bW, 0,  0 }, {bW, bD, 0 });  // bottom 1
-            drawBorderTri({0,  0,  0 }, {bW, bD, 0 }, {0,  bD, 0 });  // bottom 2
-            drawBorderTri({0,  0,  bH}, {bW, bD, bH}, {bW, 0,  bH});  // top 1
-            drawBorderTri({0,  0,  bH}, {0,  bD, bH}, {bW, bD, bH});  // top 2
-            drawBorderTri({0,  0,  0 }, {bW, 0,  0 }, {bW, 0,  bH});  // back  (y=0)  1
-            drawBorderTri({0,  0,  0 }, {bW, 0,  bH}, {0,  0,  bH});  // back  (y=0)  2
-            drawBorderTri({0,  bD, 0 }, {bW, bD, bH}, {bW, bD, 0 });  // front (y=bD) 1
-            drawBorderTri({0,  bD, 0 }, {0,  bD, bH}, {bW, bD, bH});  // front (y=bD) 2
-            drawBorderTri({0,  0,  0 }, {0,  bD, 0 }, {0,  bD, bH});  // left  (x=0)  1
-            drawBorderTri({0,  0,  0 }, {0,  bD, bH}, {0,  0,  bH});  // left  (x=0)  2
-            drawBorderTri({bW, 0,  0 }, {bW, bD, bH}, {bW, bD, 0 });  // right (x=bW) 1
-            drawBorderTri({bW, 0,  0 }, {bW, 0,  bH}, {bW, bD, bH});  // right (x=bW) 2*/
 
             drawBorderTri({0,  0,  0 }, {bW, 0,  0 }, {bW, 0,  0 });  // bottom 1
             drawBorderTri({0,  0,  0 }, {0 , bD, 0 }, {0 , bD, 0 });  // bottom 2

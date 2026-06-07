@@ -4,14 +4,15 @@
 #include "types.h"
 
 // GAMEPLAY SETTINGS
+bool allowCommands            = true;         // allow commands to be run through the terminal
 constexpr bool echoCommands             = true;         // echos back to you what command was executed
-constexpr double sensMultiplier         = 0.50f;       // multiplies sensitivity by this factor. individual sens can be adjusted in mouse settings 
-constexpr bool Cheats                   = true;       // Enables F3 (spectator) and F4 (survival) toggles at runtime
-constexpr int startupGamemode          = 1;           // 0 for survival, 1 for creative, 2 for adventure, 3 for spectator
-constexpr bool allowWorldSaveLoad       = true;        // Set allowWorldSaveLoad to false to disable F1/F2 entirely and hide all related UI.
+constexpr double sensMultiplier         = 0.50f;        // multiplies sensitivity by this factor. individual sens can be adjusted in mouse settings 
+constexpr bool Cheats                   = true;         // Enables F3 (spectator) and F4 (survival) toggles at runtime
+constexpr int startupGamemode          = 1;             // 0 for survival, 1 for creative, 2 for adventure, 3 for spectator
+constexpr bool allowWorldSaveLoad       = true;         // Set allowWorldSaveLoad to false to disable F1/F2 entirely and hide all related UI.
 constexpr bool showCrosshair            = true;
 constexpr double startPos[3]               = {8.0f, 8.0f, 3.5f};       // pk start
-//constexpr vector startPos               = {-5.0f, 5.0f, 6.0f};    // creative floating start
+//constexpr vector startPos               = {-5.0f, 5.0f, 6.0f};       // creative floating start
 
 // MINECRAFT TYPE SETTINGS
 constexpr int    targetResolution       = 2;            // Block texture resolution (1 or 2)

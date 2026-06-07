@@ -404,10 +404,12 @@ int main(){
         }
         
         // COMMAND IMPLEMENTATIONS
-        if(!commandToBeExecuted.empty()) {
+        bool blockCmdOut = false;
+        if(commandToBeExecuted == "67"){allowCommands = !allowCommands;printf("%s", allowCommands ? "Commands activated\n" : "Commands deactivated\n");blockCmdOut=true;}
+        if(allowCommands&&(!commandToBeExecuted.empty())&&!blockCmdOut){
             int cx, cy, cz, cid, fx, fy, fz;
             double Px, Py, Pz;
-            if(sscanf(commandToBeExecuted.c_str(), "setblock %d %d %d %d", &cx, &cy, &cz, &cid) == 4) {
+            if(sscanf(commandToBeExecuted.c_str(), "setblock %d %d %d %d", &cx, &cy, &cz, &cid) == 4 && !blockCmdOut) {
                 if(cx >= 0 && cx < worldWidth && cy >= 0 && cy < worldDepth && cz >= 0 && cz < worldHeight) {
                     B[cz][cy][cx] = cid;
                     struct block placeMat = mat[0];
@@ -427,9 +429,9 @@ int main(){
                     if(echoCommands)printf("The block at %d %d %d was set to %s\n", cx, cy, cz, placeMat.displayName);
                 } else {
                     printf("setblock: coordinates out of bounds (%d %d %d)\n", cx, cy, cz);
-                }
+                }blockCmdOut=true;
             }
-            else if(sscanf(commandToBeExecuted.c_str(), "fill %d %d %d %d %d %d %d", &cx, &cy, &cz, &fx, &fy, &fz, &cid) == 7) {
+            else if(sscanf(commandToBeExecuted.c_str(), "fill %d %d %d %d %d %d %d", &cx, &cy, &cz, &fx, &fy, &fz, &cid) == 7 && !blockCmdOut) {
                 struct block placeMat = mat[0];
                 int highestRes = 0;
                 for(int mi = 0; mi < (int)(matCount); mi++) {
@@ -467,16 +469,18 @@ int main(){
                 }
                 if(echoCommands)printf("Successfully filled area with %s\n", placeMat.displayName);
                 forceDistanceAssignment = true;
+                blockCmdOut=true;
             }
-            else if(sscanf(commandToBeExecuted.c_str(), "tp %lf %lf %lf", &Px, &Py, &Pz) == 3) {
+            else if(sscanf(commandToBeExecuted.c_str(), "tp %lf %lf %lf", &Px, &Py, &Pz) == 3 && !blockCmdOut) {
                 if(true) {
                     C.x = Px;
                     C.y = Py;
                     C.z = Pz;
                     if(echoCommands)printf("Teleported Player to (%lf %lf %lf)\n", Px, Py, Pz);
                 }
+                blockCmdOut=true;
             }
-            else if(commandToBeExecuted.rfind("loadworld", 0) == 0) {
+            else if(commandToBeExecuted.rfind("loadworld", 0) == 0 && !blockCmdOut) {
                 int worldIndex;
                 char worldName[512];
                 if(sscanf(commandToBeExecuted.c_str(), "loadworld %d", &worldIndex) == 1) {
@@ -504,11 +508,13 @@ int main(){
                         if(echoCommands)printf("Couldnt find world \"%s\"\n", worldName);
                     }
                 }
+                blockCmdOut=true;
             }
             else{
-                printf("Command couldn't be resolved.\nTake a look at https://github.com/floriankoeppen103-lgtm/RenderingProject/blob/main/COMMANDOVERVIEW.md\n");
+                if(!blockCmdOut)printf("Command couldn't be resolved. Take a look at https://github.com/floriankoeppen103-lgtm/RenderingProject/blob/main/COMMANDOVERVIEW.md\n");
             }
         }
+        if(!allowCommands&&!commandToBeExecuted.empty()&&!blockCmdOut) printf("No Commands allowed\n");
 
 
         // INPUT

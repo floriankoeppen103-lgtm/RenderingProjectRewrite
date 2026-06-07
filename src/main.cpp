@@ -113,22 +113,83 @@ int main(){
                 blockToDestroy = triangle[j].associatedBlockCoordinates;
             }
         }
+        // found what block to destroy, coords stored in blockTorDestroy
         if(upTilNowClosestT < blockReach) {
+            // now destroy it!
+            // set B to 0
             B[blockToDestroy.z][blockToDestroy.y][blockToDestroy.x] = 0;
+            // compact out the triangles belonging to the destroyed block and its 6 neighbors,
+            // keeping the active range [0, populatedTriangleCount) contiguous
+            int writeIndex = 0;
             for(int i = 0; i < populatedTriangleCount; i++) {
-                if(triangle[i].associatedBlockCoordinates.x == blockToDestroy.x &&
-                   triangle[i].associatedBlockCoordinates.y == blockToDestroy.y &&
-                   triangle[i].associatedBlockCoordinates.z == blockToDestroy.z) {
-                    populatedTriangleCount--;
-                    triangle[i] = triangle[populatedTriangleCount];
-                    i--;
-                }
+                struct intVector c = triangle[i].associatedBlockCoordinates;
+                bool belongsToAffectedBlock =
+                    (c.x == blockToDestroy.x     && c.y == blockToDestroy.y     && c.z == blockToDestroy.z)     ||
+                    (c.x == blockToDestroy.x + 1 && c.y == blockToDestroy.y     && c.z == blockToDestroy.z)     ||
+                    (c.x == blockToDestroy.x - 1 && c.y == blockToDestroy.y     && c.z == blockToDestroy.z)     ||
+                    (c.x == blockToDestroy.x     && c.y == blockToDestroy.y + 1 && c.z == blockToDestroy.z)     ||
+                    (c.x == blockToDestroy.x     && c.y == blockToDestroy.y - 1 && c.z == blockToDestroy.z)     ||
+                    (c.x == blockToDestroy.x     && c.y == blockToDestroy.y     && c.z == blockToDestroy.z + 1) ||
+                    (c.x == blockToDestroy.x     && c.y == blockToDestroy.y     && c.z == blockToDestroy.z - 1);
+
+                if(belongsToAffectedBlock) continue;
+
+                if(writeIndex != i) triangle[writeIndex] = triangle[i];
+                writeIndex++;
             }
+            for(int i = writeIndex; i < populatedTriangleCount; i++) triangle[i] = {0};
+            populatedTriangleCount = writeIndex;
+
             blockCount--;
+            // regenerate the triangles for neighboring blocks, now that B[blockToDestroy] is transparent
+            if((blockToDestroy.x + 1 < worldWidth) && (B[blockToDestroy.z][blockToDestroy.y][blockToDestroy.x + 1] != 0)){
+                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
+                    blockToDestroy.x + 1, blockToDestroy.y, blockToDestroy.z, getMaterial(mat, matCount, B[blockToDestroy.z][blockToDestroy.y][blockToDestroy.x + 1]),
+                    mat, matCount, targetResolution);
+            }
+
+            if((blockToDestroy.x - 1 >= 0) && (B[blockToDestroy.z][blockToDestroy.y][blockToDestroy.x - 1] != 0)){
+                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
+                    blockToDestroy.x - 1, blockToDestroy.y, blockToDestroy.z, getMaterial(mat, matCount, B[blockToDestroy.z][blockToDestroy.y][blockToDestroy.x - 1]),
+                    mat, matCount, targetResolution);
+            }
+
+            if((blockToDestroy.y + 1 < worldDepth) && (B[blockToDestroy.z][blockToDestroy.y + 1][blockToDestroy.x] != 0)){
+                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
+                    blockToDestroy.x, blockToDestroy.y + 1, blockToDestroy.z, getMaterial(mat, matCount, B[blockToDestroy.z][blockToDestroy.y + 1][blockToDestroy.x]),
+                    mat, matCount, targetResolution);
+            }
+
+            if((blockToDestroy.y - 1 >= 0) && (B[blockToDestroy.z][blockToDestroy.y - 1][blockToDestroy.x] != 0)){
+                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
+                    blockToDestroy.x, blockToDestroy.y - 1, blockToDestroy.z, getMaterial(mat, matCount, B[blockToDestroy.z][blockToDestroy.y - 1][blockToDestroy.x]),
+                    mat, matCount, targetResolution);
+            }
+
+            if((blockToDestroy.z + 1 < worldHeight) && (B[blockToDestroy.z + 1][blockToDestroy.y][blockToDestroy.x] != 0)){
+                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
+                    blockToDestroy.x, blockToDestroy.y, blockToDestroy.z + 1, getMaterial(mat, matCount, B[blockToDestroy.z + 1][blockToDestroy.y][blockToDestroy.x]),
+                    mat, matCount, targetResolution);
+            }
+
+            if((blockToDestroy.z - 1 >= 0) && (B[blockToDestroy.z - 1][blockToDestroy.y][blockToDestroy.x] != 0)){
+                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
+                    blockToDestroy.x, blockToDestroy.y, blockToDestroy.z - 1, getMaterial(mat, matCount, B[blockToDestroy.z - 1][blockToDestroy.y][blockToDestroy.x]),
+                    mat, matCount, targetResolution);
+            }
+
+            for(int i = 0; i < populatedTriangleCount; i++) {
+                triangle[i].distance = length({C.x - triangle[i].Center.x, C.y - triangle[i].Center.y, C.z - triangle[i].Center.z});
+            }
+            sortTrianglesByDistance(triangle, populatedTriangleCount);
+
+            forceDistanceAssignment = true;
+
         }
     };
 
     auto handleBlockPlacing = [&]() {
+        // finding the right triangle
         struct vector triangleCenterLocation = {-1.0f, -1.0f, -1.0f};
         struct intVector blockLocation = {-1, -1, -1};
         double upTilNowClosestT = 1000.0f;
@@ -142,7 +203,7 @@ int main(){
             }
         }
         if(blockLocation.x == -1 || upTilNowClosestT >= blockReach) return;
-
+        // finding the right block
         struct intVector opposingBlock = {-1, -1, -1};
         double faceX = triangleCenterLocation.x - double(blockLocation.x);
         double faceY = triangleCenterLocation.y - double(blockLocation.y);
@@ -160,9 +221,11 @@ int main(){
             printf("Block placement out of bounds: %d, %d, %d\n", opposingBlock.x, opposingBlock.y, opposingBlock.z);
             return;
         }
+
+        // placing the block
         B[opposingBlock.z][opposingBlock.y][opposingBlock.x] = selectedMaterial.ID;
         struct block placeMat = selectedMaterial;
-        int highestRes = 0;
+        {int highestRes = 0;
         for(int mi = 0; mi < (int)(matCount); mi++) {
             if(mat[mi].ID == selectedMaterial.ID && mat[mi].PixelResolution > highestRes && mat[mi].PixelResolution <= targetResolution)
                 highestRes = mat[mi].PixelResolution;
@@ -170,11 +233,38 @@ int main(){
         for(int mi = 0; mi < (int)(matCount); mi++) {
             if(mat[mi].ID == selectedMaterial.ID && mat[mi].PixelResolution == highestRes)
                 placeMat = mat[mi];
-        }
-        int added = buildTrianglesForBlock(triangle, populatedTriangleCount, opposingBlock.x, opposingBlock.y, opposingBlock.z, placeMat, targetResolution);
+        }}
+        int added = buildTrianglesForBlock(triangle, B, populatedTriangleCount, opposingBlock.x, opposingBlock.y, opposingBlock.z, placeMat, mat, matCount, targetResolution);
         populatedTriangleCount += added;
+        
+        for(int i = 0; i < populatedTriangleCount; i++) {
+                triangle[i].distance = length({C.x - triangle[i].Center.x, C.y - triangle[i].Center.y, C.z - triangle[i].Center.z});
+            }
+            sortTrianglesByDistance(triangle, populatedTriangleCount);
+
         blockCount++;
         forceDistanceAssignment = true;
+
+        // destroy the stuff
+        int writeIndex = 0;
+        for(int i = 0; i < populatedTriangleCount; i++) {
+            struct intVector c = triangle[i].associatedBlockCoordinates;
+            bool belongsToAffectedBlock =
+                (c.x == blockLocation.x     && c.y == blockLocation.y     && c.z == blockLocation.z);
+
+            if(belongsToAffectedBlock) continue;
+
+            if(writeIndex != i) triangle[writeIndex] = triangle[i];
+            writeIndex++;
+        }
+
+        for(int i = writeIndex; i < populatedTriangleCount; i++) triangle[i] = {0};
+        
+        populatedTriangleCount = writeIndex;    
+        
+        populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
+                    blockLocation.x, blockLocation.y, blockLocation.z, getMaterial(mat, matCount, B[blockLocation.z][blockLocation.y][blockLocation.x]),
+                    mat, matCount, targetResolution);
     };
 
     auto handleCameraRotation = [&]() {
@@ -222,8 +312,10 @@ int main(){
             DrawText(TextFormat("DIR     X : %.2f   Y : %.2f Z :   %.2f", Cf.x, Cf.y, Cf.z), 10, 40, 30, BLACK);
         if(showSpeedVectors && renderOverlay)
             DrawText(TextFormat("Forward Speed: %.2f   Right Speed: %.2f    Upward Speed:   %.2f", forwardSpeed, rightSpeed, upSpeed), 10, 70, 30, BLACK);
+        if(showTriangleCount && renderOverlay)
+            DrawText(TextFormat("Triangles: %d", populatedTriangleCount), GetScreenWidth()-300, 40, 30, BLACK);
         if(showFPS && renderOverlay)
-            DrawText(TextFormat("FPS: %.2f", 1/deltaTime), GetScreenWidth()-200, 70, 30, BLACK);
+            DrawText(TextFormat("FPS: %.2f", 1/deltaTime), GetScreenWidth()-300, 70, 30, BLACK);
         if(showBlockCount && renderOverlay)
             DrawText(TextFormat("The Current amound of Blocks is: %d", blockCount), 10, 100, 30, BLACK);
         if(showLoadedWorldName && renderOverlay && allowWorldSaveLoad)
@@ -269,7 +361,6 @@ int main(){
         else
             DrawText("Scroll to cycle blocks", WindowWidth/2 - 90, WindowHeight - 30, 18, WHITE);
     };
-
 
     auto applyCollisionAndMove = [&]() {
         struct vector CmoveStraight = normalizedVector({Cf.x, Cf.y, 0});
@@ -422,7 +513,7 @@ int main(){
                         if(mat[mi].ID == cid && mat[mi].PixelResolution == highestRes)
                             placeMat = mat[mi];
                     }
-                    int added = buildTrianglesForBlock(triangle, populatedTriangleCount, cx, cy, cz, placeMat, targetResolution);
+                    int added = buildTrianglesForBlock(triangle, B, populatedTriangleCount, cx, cy, cz, placeMat, mat, matCount, targetResolution);
                     populatedTriangleCount += added;
                     blockCount++;
                     forceDistanceAssignment = true;
@@ -461,7 +552,7 @@ int main(){
                                 blockCount--;
                             }
                             B[bz][by][bx] = cid;
-                            int added = buildTrianglesForBlock(triangle, populatedTriangleCount, bx, by, bz, placeMat, targetResolution);
+                            int added = buildTrianglesForBlock(triangle, B, populatedTriangleCount, bx, by, bz, placeMat, mat, matCount, targetResolution);
                             populatedTriangleCount += added;
                             blockCount++;
                         }

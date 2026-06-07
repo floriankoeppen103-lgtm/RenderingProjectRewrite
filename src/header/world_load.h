@@ -39,8 +39,7 @@ inline int loadWorld(
            sizeof(struct face) * worldWidth * worldDepth * worldHeight
                                * 12 * targetResolution * targetResolution);
     int count = buildTrianglesFromWorld(
-        triangle, B, mat, matCount,
-        worldWidth, worldDepth, worldHeight, targetResolution
+        triangle, B, mat, matCount, targetResolution
     );
 
     blockCount = 0;

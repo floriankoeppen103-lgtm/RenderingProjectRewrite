@@ -35,6 +35,7 @@ struct block {
     int ID;
     int PixelResolution;
     char displayName[32];
+    bool isTransparent;
     Color topColor[4];
     Color bottomColor[4];
     Color frontColor[4];

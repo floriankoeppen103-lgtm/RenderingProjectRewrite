@@ -27,10 +27,13 @@ constexpr bool skyBackground            = true;         // Light blue sky backgr
 constexpr bool drawWireframe            = false;        // Draw triangle wireframe
 constexpr bool drawSurfaces             = true;         // Fill triangles with color
 constexpr bool drawWorldBorder          = true;         // Draws a thin worldborder
+          bool doCulling                = true;         // doesnt draw hidden faces
+constexpr bool doTestColors             = false;         // draws each face in a clear color
 
 // OVERLAY SETTINGS
 constexpr bool renderOverlay       = true;   // Toggle the whole screen overlay
 constexpr bool showBlockCount      = true;   // (o) Show current block count
+constexpr bool showTriangleCount   = true;   // (o) Shows you how many triangles are being displayed  
 constexpr bool showCoordinates     = true;   // (o) Show player coordinates
 constexpr bool showCamDirection    = true;   // (o) Show camera direction vector
 constexpr bool showSpeedVectors    = true;   // (o) Show forward/right/up speed
@@ -69,4 +72,4 @@ constexpr bool generalDebugMode      = false;  // Enable debug mode
 constexpr bool logCamVectors         = false;  // Log camera vectors each frame
 constexpr bool logTriangleDistances  = false;  // Log triangle distances each frame
 
-#endif // SETTINGS_H
+#endif

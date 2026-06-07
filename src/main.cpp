@@ -66,7 +66,7 @@ int main(){
     {
         char prebuiltPath[512];
         snprintf(prebuiltPath, sizeof(prebuiltPath), "%sworlds/prebuilt/world_data.bin", GetApplicationDirectory());
-        int result = loadWorld(prebuiltPath, B, triangle, mat, (int)(sizeof(mat)/sizeof(mat[0])), blockCount);
+        int result = loadWorld(prebuiltPath, B, triangle, mat, matCount, blockCount);
         if(result >= 0) { populatedTriangleCount = result; forceDistanceAssignment = true; }
     }
 
@@ -163,11 +163,11 @@ int main(){
         B[opposingBlock.z][opposingBlock.y][opposingBlock.x] = selectedMaterial.ID;
         struct block placeMat = selectedMaterial;
         int highestRes = 0;
-        for(int mi = 0; mi < (int)(sizeof(mat)/sizeof(mat[0])); mi++) {
+        for(int mi = 0; mi < (int)(matCount); mi++) {
             if(mat[mi].ID == selectedMaterial.ID && mat[mi].PixelResolution > highestRes && mat[mi].PixelResolution <= targetResolution)
                 highestRes = mat[mi].PixelResolution;
         }
-        for(int mi = 0; mi < (int)(sizeof(mat)/sizeof(mat[0])); mi++) {
+        for(int mi = 0; mi < (int)(matCount); mi++) {
             if(mat[mi].ID == selectedMaterial.ID && mat[mi].PixelResolution == highestRes)
                 placeMat = mat[mi];
         }
@@ -402,7 +402,8 @@ int main(){
             }
             commandReceived = true;
         }
-
+        
+        // COMMAND IMPLEMENTATIONS
         if(!commandToBeExecuted.empty()) {
             int cx, cy, cz, cid, fx, fy, fz;
             double Px, Py, Pz;
@@ -411,11 +412,11 @@ int main(){
                     B[cz][cy][cx] = cid;
                     struct block placeMat = mat[0];
                     int highestRes = 0;
-                    for(int mi = 0; mi < (int)(sizeof(mat)/sizeof(mat[0])); mi++) {
+                    for(int mi = 0; mi < (int)(matCount); mi++) {
                         if(mat[mi].ID == cid && mat[mi].PixelResolution > highestRes && mat[mi].PixelResolution <= targetResolution)
                             highestRes = mat[mi].PixelResolution;
                     }
-                    for(int mi = 0; mi < (int)(sizeof(mat)/sizeof(mat[0])); mi++) {
+                    for(int mi = 0; mi < (int)(matCount); mi++) {
                         if(mat[mi].ID == cid && mat[mi].PixelResolution == highestRes)
                             placeMat = mat[mi];
                     }
@@ -423,6 +424,7 @@ int main(){
                     populatedTriangleCount += added;
                     blockCount++;
                     forceDistanceAssignment = true;
+                    if(echoCommands)printf("The block at %d %d %d was set to %s\n", cx, cy, cz, placeMat.displayName);
                 } else {
                     printf("setblock: coordinates out of bounds (%d %d %d)\n", cx, cy, cz);
                 }
@@ -430,11 +432,11 @@ int main(){
             else if(sscanf(commandToBeExecuted.c_str(), "fill %d %d %d %d %d %d %d", &cx, &cy, &cz, &fx, &fy, &fz, &cid) == 7) {
                 struct block placeMat = mat[0];
                 int highestRes = 0;
-                for(int mi = 0; mi < (int)(sizeof(mat)/sizeof(mat[0])); mi++) {
+                for(int mi = 0; mi < (int)(matCount); mi++) {
                     if(mat[mi].ID == cid && mat[mi].PixelResolution > highestRes && mat[mi].PixelResolution <= targetResolution)
                         highestRes = mat[mi].PixelResolution;
                 }
-                for(int mi = 0; mi < (int)(sizeof(mat)/sizeof(mat[0])); mi++) {
+                for(int mi = 0; mi < (int)(matCount); mi++) {
                     if(mat[mi].ID == cid && mat[mi].PixelResolution == highestRes)
                         placeMat = mat[mi];
                 }
@@ -463,6 +465,7 @@ int main(){
                         }
                     }
                 }
+                if(echoCommands)printf("Successfully filled area with %s\n", placeMat.displayName);
                 forceDistanceAssignment = true;
             }
             else if(sscanf(commandToBeExecuted.c_str(), "tp %lf %lf %lf", &Px, &Py, &Pz) == 3) {
@@ -470,8 +473,40 @@ int main(){
                     C.x = Px;
                     C.y = Py;
                     C.z = Pz;
-                    printf("Teleported Player to (%lf %lf %lf)\n", Px, Py, Pz);
+                    if(echoCommands)printf("Teleported Player to (%lf %lf %lf)\n", Px, Py, Pz);
                 }
+            }
+            else if(commandToBeExecuted.rfind("loadworld", 0) == 0) {
+                int worldIndex;
+                char worldName[512];
+                if(sscanf(commandToBeExecuted.c_str(), "loadworld %d", &worldIndex) == 1) {
+                    char prebuiltDir[512];
+                    snprintf(prebuiltDir, sizeof(prebuiltDir), "%sworlds/prebuilt", GetApplicationDirectory());
+                    FilePathList prebuiltFiles = LoadDirectoryFiles(prebuiltDir);
+                    if(worldIndex >= 0 && worldIndex < (int)prebuiltFiles.count) {
+                        int result = loadWorld(prebuiltFiles.paths[worldIndex], B, triangle, mat, matCount, blockCount);
+                        if(result >= 0) { populatedTriangleCount = result; forceDistanceAssignment = true; }
+                        if(echoCommands)printf("Successfully loaded the %d-th world from \\worlds\\prebuilt\\:\n%s\n", worldIndex, prebuiltFiles.paths[worldIndex]);
+                    } else {
+                        printf("loadworld: index %d out of range (found %u worlds in prebuilt/)\n", worldIndex, prebuiltFiles.count);
+                    }
+                    UnloadDirectoryFiles(prebuiltFiles);
+                    // holy damn, no way this works
+                }
+                else if(sscanf(commandToBeExecuted.c_str(), "loadworld \"%511[^\"]\"", worldName) == 1) {
+                    char prebuiltPath[1024];
+                    snprintf(prebuiltPath, sizeof(prebuiltPath), "%sworlds/prebuilt/%s", GetApplicationDirectory(), worldName);
+                    int result = loadWorld(prebuiltPath, B, triangle, mat, matCount, blockCount);
+                    if(result >= 0){
+                        populatedTriangleCount = result; forceDistanceAssignment = true;
+                        if(echoCommands)printf("Successfully loaded world: %s\n", worldName);
+                    } else{
+                        if(echoCommands)printf("Couldnt find world \"%s\"\n", worldName);
+                    }
+                }
+            }
+            else{
+                printf("Command couldn't be resolved.\nTake a look at https://github.com/floriankoeppen103-lgtm/RenderingProject/blob/main/COMMANDOVERVIEW.md\n");
             }
         }
 
@@ -488,7 +523,7 @@ int main(){
         if(allowWorldSaveLoad && IsKeyPressed(KEY_F1)) saveWorld(B);
         if(Cheats && IsKeyPressed(KEY_F3)) { gamemode = (gamemode+1)%4; changeMadeToGamemode = true; }
         if(allowWorldSaveLoad && IsKeyPressed(KEY_F2)) {
-            int newCount = loadNextWorldSave(B, loadedWorldName, sizeof(loadedWorldName), worldSaveCycleIndex, triangle, mat, (int)(sizeof(mat)/sizeof(mat[0])), blockCount);
+            int newCount = loadNextWorldSave(B, loadedWorldName, sizeof(loadedWorldName), worldSaveCycleIndex, triangle, mat, (int)(matCount), blockCount);
             if(newCount >= 0) { populatedTriangleCount = newCount; forceDistanceAssignment = true; }
         }
         if(blockBreakingRights && (IsKeyPressed(KEY_BACKSPACE) || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))

@@ -4,6 +4,7 @@
 #include "types.h"
 
 // GAMEPLAY SETTINGS
+constexpr bool echoCommands             = true;         // echos back to you what command was executed
 constexpr double sensMultiplier         = 0.50f;       // multiplies sensitivity by this factor. individual sens can be adjusted in mouse settings 
 constexpr bool Cheats                   = true;       // Enables F3 (spectator) and F4 (survival) toggles at runtime
 constexpr int startupGamemode          = 1;           // 0 for survival, 1 for creative, 2 for adventure, 3 for spectator

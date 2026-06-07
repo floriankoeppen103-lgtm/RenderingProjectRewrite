@@ -78,4 +78,6 @@ constexpr struct block mat[] = {
     air02, bedrock02, dirt02, grass02, oak02, leaves02, chest02, cobble02,
 };
 
+int matCount = int( sizeof(mat) / sizeof(mat[0]) );
+
 #endif // BLOCK_DATA_H

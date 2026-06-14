@@ -7,7 +7,7 @@
 bool allowCommands            = true;         // allow commands to be run through the terminal
 constexpr bool echoCommands             = true;         // echos back to you what command was executed
 constexpr double sensMultiplier         = 0.50f;        // multiplies sensitivity by this factor. individual sens can be adjusted in mouse settings 
-constexpr bool Cheats                   = true;         // Enables F3 (spectator) and F4 (survival) toggles at runtime
+constexpr bool Cheats                   = true;         // Enables F4 (cycle gamemode) toggle at runtime
 constexpr int startupGamemode          = 1;             // 0 for survival, 1 for creative, 2 for adventure, 3 for spectator
 constexpr bool allowWorldSaveLoad       = true;         // Set allowWorldSaveLoad to false to disable F1/F2 entirely and hide all related UI.
 constexpr bool showCrosshair            = true;
@@ -31,7 +31,7 @@ constexpr bool doTestColors             = false;         // draws each face in a
 constexpr double baseFovYDeg            = 70.0f;        // Vertical FOV (degrees) passed to raylib's Camera3D
 
 // OVERLAY SETTINGS
-constexpr bool renderOverlay       = true;   // Toggle the whole screen overlay
+constexpr bool renderOverlayDefault = true;   // Toggle the whole screen overlay (F3 toggles at runtime)
 constexpr bool showBlockCount      = true;   // (o) Show current block count
 constexpr bool showTriangleCount   = true;   // (o) Shows you how many triangles are being displayed  
 constexpr bool showCoordinates     = true;   // (o) Show player coordinates
@@ -44,6 +44,7 @@ constexpr bool showBenchmark       = true;   // (o) Show per-frame section timin
 
 // SETTINGS FOR WINDOW
 constexpr bool   getScreenDimensions = true;    // Auto-maximize window on start
+constexpr bool   limitFPS            = false;   // turn on or off whether to limit your FPS
 constexpr int    FPS                 = 60;      // Target FPS
 constexpr int    manualWindowHeight  = 1200;    // Window height when auto-sizing is off
 constexpr int    manualWindowWidth   = 1800;    // Window width when auto-sizing is off

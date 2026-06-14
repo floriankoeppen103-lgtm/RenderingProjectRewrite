@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <chrono>
 #include <string>
+#include <vector>
 #include <iostream>
 #include "header/settings.h"
 #include "header/types.h"
@@ -35,8 +36,12 @@ static void applyGamemodeFlags(int gm, bool& exertGravity, bool& noClip, bool& b
 int main(){
     bool grounded = false;
     bool startCounting = true;
+    bool renderOverlay = renderOverlayDefault;
     double time = 0.0f;
     double deltaTime    = 1.0f / (double)FPS;
+    double displayedFPS = 1.0 / deltaTime;
+    int    lastFPSUpdateSecond = -1;
+    std::vector<double> fpsSamples;
     int    WindowHeight = manualWindowHeight;
     int    WindowWidth  = manualWindowWidth;
 
@@ -80,7 +85,7 @@ int main(){
 
     rlDisableBackfaceCulling(); // generated face winding isn't guaranteed consistent; cull on distance/material instead
 
-    SetTargetFPS(FPS);
+    if(limitFPS)SetTargetFPS(FPS);
     if(turnByMouse) DisableCursor();
 
     double spawnPoint[3] = {startPos[0], startPos[1], startPos[2]};
@@ -207,7 +212,7 @@ int main(){
         if(showTriangleCount && renderOverlay)
             DrawText(TextFormat("Triangles: %d", opaqueCount + translucentCount), GetScreenWidth()-300, 40, 30, BLACK);
         if(showFPS && renderOverlay)
-            DrawText(TextFormat("FPS: %.2f", 1/deltaTime), GetScreenWidth()-300, 70, 30, BLACK);
+            DrawText(TextFormat("FPS: %.2f", displayedFPS), GetScreenWidth()-300, 70, 30, BLACK);
         if(showBlockCount && renderOverlay)
             DrawText(TextFormat("The Current amound of Blocks is: %d", blockCount), 10, 100, 30, BLACK);
         if(showLoadedWorldName && renderOverlay && allowWorldSaveLoad)
@@ -390,6 +395,19 @@ int main(){
     while(!WindowShouldClose()){
         deltaTime  = GetFrameTime();
         frameTheta = Theta * deltaTime;
+        // FPS math
+        int currentSecond = (int)GetTime();
+        if(currentSecond != lastFPSUpdateSecond) {
+            if(!fpsSamples.empty()) {
+                double sum = 0.0;
+                for(double f : fpsSamples) sum += f;
+                displayedFPS = sum / fpsSamples.size();
+                fpsSamples.clear();
+            }
+            lastFPSUpdateSecond = currentSecond;
+        }
+        fpsSamples.push_back(1.0 / deltaTime);
+
         _bt = GetTime();
 
         // Gamemode flag sync
@@ -491,15 +509,14 @@ int main(){
         selectedMaterial = hotbar[selectedHotbarIndex];
 
         if(allowWorldSaveLoad && IsKeyPressed(KEY_F1)) saveWorld(B);
-        if(Cheats && IsKeyPressed(KEY_F3)) { gamemode = (gamemode+1)%4; changeMadeToGamemode = true; }
+        if(IsKeyPressed(KEY_F3)) renderOverlay = !renderOverlay;
+        if(Cheats && IsKeyPressed(KEY_F4)) { gamemode = (gamemode+1)%4; changeMadeToGamemode = true; }
         if(allowWorldSaveLoad && IsKeyPressed(KEY_F2)) {
             int newTotal = loadNextWorldSave(B, loadedWorldName, sizeof(loadedWorldName), worldSaveCycleIndex, triangle, mat, (int)(matCount), blockCount, opaqueCount);
             if(newTotal >= 0) translucentCount = newTotal - opaqueCount;
         }
-        if(blockBreakingRights && (IsKeyPressed(KEY_BACKSPACE) || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))
-            handleBlockBreaking();
-        if(blockPlacementRights && (IsKeyPressed(KEY_ENTER) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)))
-            handleBlockPlacing();
+        if(blockBreakingRights && (IsKeyPressed(KEY_BACKSPACE) || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))  handleBlockBreaking();
+        if(blockPlacementRights && (IsKeyPressed(KEY_ENTER) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)))  handleBlockPlacing();
 
         timeInput = (GetTime() - _bt) * 1000.0;
 

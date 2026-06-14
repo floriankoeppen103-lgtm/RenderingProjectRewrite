@@ -1,4 +1,5 @@
 #include <raylib.h>
+#include <rlgl.h>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -6,14 +7,11 @@
 #include <mutex>
 #include <atomic>
 #include <condition_variable>
-#include <functional>
-#include <vector>
 #include <chrono>
 #include <string>
 #include <iostream>
 #include "header/settings.h"
 #include "header/types.h"
-#include "header/thread_pool.h"
 #include "header/vector_math.h"
 #include "header/ray_intersection.h"
 #include "header/rendering.h"
@@ -36,16 +34,13 @@ static void applyGamemodeFlags(int gm, bool& exertGravity, bool& noClip, bool& b
 
 int main(){
     bool grounded = false;
-    bool forceDistanceAssignment = false;
     bool startCounting = true;
     double time = 0.0f;
     double deltaTime    = 1.0f / (double)FPS;
     int    WindowHeight = manualWindowHeight;
     int    WindowWidth  = manualWindowWidth;
 
-    // FOV settings -- mutable because sprint changes them at runtime
-    double FOVDepth            = 1.0f;
-    double FOVWidth            = 1.5f;
+    // FOV zoom factor -- mutable because sprinting widens it at runtime
     double FOVHeight           = 1.0f;
     double sprintFOVMultiplier = 1.3f;
 
@@ -64,27 +59,14 @@ int main(){
     static struct face* triangle = new face[worldWidth*worldHeight*worldDepth*12*targetResolution*targetResolution]();
     static int B[worldHeight][worldDepth][worldWidth] = {};
 
-    // Per-triangle projection results, filled in parallel before drawing.
-    struct RenderResult {
-        struct sextupleVector sv;
-        bool visible1;
-        bool visible2;
-    };
-    static struct RenderResult* renderResults = new RenderResult[worldWidth*worldHeight*worldDepth*12*targetResolution*targetResolution]();
-
-    // Persistent worker pool for the per-frame projection/culling pass.
-    int projectionThreadCount = (int)std::thread::hardware_concurrency();
-    if(projectionThreadCount <= 0) projectionThreadCount = 1;
-    if(projectionThreadCount > 8) projectionThreadCount = 8;
-    static ThreadPool renderPool(projectionThreadCount);
-
     int blockCount = 0;
-    int populatedTriangleCount = 0;
+    int opaqueCount = 0;
+    int translucentCount = 0;
     {
         char prebuiltPath[512];
         snprintf(prebuiltPath, sizeof(prebuiltPath), "%sworlds/prebuilt/world_data.bin", GetApplicationDirectory());
-        int result = loadWorld(prebuiltPath, B, triangle, mat, matCount, blockCount);
-        if(result >= 0) { populatedTriangleCount = result; forceDistanceAssignment = true; }
+        int total = loadWorld(prebuiltPath, B, triangle, mat, matCount, blockCount, opaqueCount);
+        if(total >= 0) translucentCount = total - opaqueCount;
     }
 
     if(getScreenDimensions) SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_MAXIMIZED);
@@ -94,8 +76,9 @@ int main(){
         MaximizeWindow();
         WindowWidth  = GetScreenWidth();
         WindowHeight = GetScreenHeight();
-        FOVWidth = float(WindowWidth)/float(WindowHeight);
     }
+
+    rlDisableBackfaceCulling(); // generated face winding isn't guaranteed consistent; cull on distance/material instead
 
     SetTargetFPS(FPS);
     if(turnByMouse) DisableCursor();
@@ -104,25 +87,24 @@ int main(){
     struct vector C   = {spawnPoint[0], spawnPoint[1], spawnPoint[2]};
     struct vector Cf  = {1.0f, 0.0f, -0.5f};
     double trueWSpeedMax = forwardSpeed;
-    double realFOVHeight = FOVDepth;
-    double realFOVWidth  = FOVHeight;
+    double realFOVHeight = FOVHeight;
     double frameTheta;
     int deathBuffer = 0;
 
-    struct block hotbar[] = {bedrock02, dirt02, grass02, oak02, leaves02, chest02, cobble02, dirt02};
+    struct block hotbar[] = {bedrock02, dirt02, grass02, oak02, leaves02, chest02, cobble02};
     int hotbarSize = sizeof(hotbar) / sizeof(hotbar[0]);
     int selectedHotbarIndex = 0;
     struct block selectedMaterial = hotbar[selectedHotbarIndex];
 
     // per-frame section timings in milliseconds — displayed when showBenchmark is true
-    double timeInput = 0.0, timePhysics = 0.0, timeDistances = 0.0, timeSort = 0.0, timeProjection = 0.0, timeRender = 0.0, timeWait = 0.0;
+    double timeInput = 0.0, timePhysics = 0.0, timeProjection = 0.0, timeRender = 0.0, timeWait = 0.0;
     double _bt = 0.0;
 
 
     auto handleBlockBreaking = [&]() {
         intVector blockToDestroy = {0};
         double upTilNowClosestT = 1000.0;
-        for(int j = 0; j < populatedTriangleCount; j++) {
+        for(int j = 0; j < opaqueCount + translucentCount; j++) {
             double t = mollerTromboree(C, Cf, triangle[j]);
             if(t < 0.01) continue;
             if(t < upTilNowClosestT) {
@@ -130,79 +112,11 @@ int main(){
                 blockToDestroy = triangle[j].associatedBlockCoordinates;
             }
         }
-        // found what block to destroy, coords stored in blockTorDestroy
+        // found what block to destroy, coords stored in blockToDestroy
         if(upTilNowClosestT < blockReach) {
-            // now destroy it!
-            // set B to 0
-            B[blockToDestroy.z][blockToDestroy.y][blockToDestroy.x] = 0;
-            // compact out the triangles belonging to the destroyed block and its 6 neighbors,
-            // keeping the active range [0, populatedTriangleCount) contiguous
-            int writeIndex = 0;
-            for(int i = 0; i < populatedTriangleCount; i++) {
-                struct intVector c = triangle[i].associatedBlockCoordinates;
-                bool belongsToAffectedBlock =
-                    (c.x == blockToDestroy.x     && c.y == blockToDestroy.y     && c.z == blockToDestroy.z)     ||
-                    (c.x == blockToDestroy.x + 1 && c.y == blockToDestroy.y     && c.z == blockToDestroy.z)     ||
-                    (c.x == blockToDestroy.x - 1 && c.y == blockToDestroy.y     && c.z == blockToDestroy.z)     ||
-                    (c.x == blockToDestroy.x     && c.y == blockToDestroy.y + 1 && c.z == blockToDestroy.z)     ||
-                    (c.x == blockToDestroy.x     && c.y == blockToDestroy.y - 1 && c.z == blockToDestroy.z)     ||
-                    (c.x == blockToDestroy.x     && c.y == blockToDestroy.y     && c.z == blockToDestroy.z + 1) ||
-                    (c.x == blockToDestroy.x     && c.y == blockToDestroy.y     && c.z == blockToDestroy.z - 1);
-
-                if(belongsToAffectedBlock) continue;
-
-                if(writeIndex != i) triangle[writeIndex] = triangle[i];
-                writeIndex++;
-            }
-            for(int i = writeIndex; i < populatedTriangleCount; i++) triangle[i] = {0};
-            populatedTriangleCount = writeIndex;
-
-            blockCount--;
-            // regenerate the triangles for neighboring blocks, now that B[blockToDestroy] is transparent
-            if((blockToDestroy.x + 1 < worldWidth) && (B[blockToDestroy.z][blockToDestroy.y][blockToDestroy.x + 1] != 0)){
-                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
-                    blockToDestroy.x + 1, blockToDestroy.y, blockToDestroy.z, getMaterial(mat, matCount, B[blockToDestroy.z][blockToDestroy.y][blockToDestroy.x + 1]),
-                    mat, matCount, targetResolution);
-            }
-
-            if((blockToDestroy.x - 1 >= 0) && (B[blockToDestroy.z][blockToDestroy.y][blockToDestroy.x - 1] != 0)){
-                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
-                    blockToDestroy.x - 1, blockToDestroy.y, blockToDestroy.z, getMaterial(mat, matCount, B[blockToDestroy.z][blockToDestroy.y][blockToDestroy.x - 1]),
-                    mat, matCount, targetResolution);
-            }
-
-            if((blockToDestroy.y + 1 < worldDepth) && (B[blockToDestroy.z][blockToDestroy.y + 1][blockToDestroy.x] != 0)){
-                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
-                    blockToDestroy.x, blockToDestroy.y + 1, blockToDestroy.z, getMaterial(mat, matCount, B[blockToDestroy.z][blockToDestroy.y + 1][blockToDestroy.x]),
-                    mat, matCount, targetResolution);
-            }
-
-            if((blockToDestroy.y - 1 >= 0) && (B[blockToDestroy.z][blockToDestroy.y - 1][blockToDestroy.x] != 0)){
-                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
-                    blockToDestroy.x, blockToDestroy.y - 1, blockToDestroy.z, getMaterial(mat, matCount, B[blockToDestroy.z][blockToDestroy.y - 1][blockToDestroy.x]),
-                    mat, matCount, targetResolution);
-            }
-
-            if((blockToDestroy.z + 1 < worldHeight) && (B[blockToDestroy.z + 1][blockToDestroy.y][blockToDestroy.x] != 0)){
-                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
-                    blockToDestroy.x, blockToDestroy.y, blockToDestroy.z + 1, getMaterial(mat, matCount, B[blockToDestroy.z + 1][blockToDestroy.y][blockToDestroy.x]),
-                    mat, matCount, targetResolution);
-            }
-
-            if((blockToDestroy.z - 1 >= 0) && (B[blockToDestroy.z - 1][blockToDestroy.y][blockToDestroy.x] != 0)){
-                populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
-                    blockToDestroy.x, blockToDestroy.y, blockToDestroy.z - 1, getMaterial(mat, matCount, B[blockToDestroy.z - 1][blockToDestroy.y][blockToDestroy.x]),
-                    mat, matCount, targetResolution);
-            }
-
-            for(int i = 0; i < populatedTriangleCount; i++) {
-                double dx = C.x - triangle[i].Center.x, dy = C.y - triangle[i].Center.y, dz = C.z - triangle[i].Center.z;
-                triangle[i].distance = dx*dx + dy*dy + dz*dz;
-            }
-            sortTrianglesByDistance(triangle, populatedTriangleCount, renderPool);
-
-            forceDistanceAssignment = true;
-
+            setBlock(triangle, opaqueCount, translucentCount, B,
+                     blockToDestroy.x, blockToDestroy.y, blockToDestroy.z, 0,
+                     mat, matCount, blockCount);
         }
     };
 
@@ -211,7 +125,7 @@ int main(){
         struct vector triangleCenterLocation = {-1.0f, -1.0f, -1.0f};
         struct intVector blockLocation = {-1, -1, -1};
         double upTilNowClosestT = 1000.0f;
-        for(int j = 0; j < populatedTriangleCount; j++) {
+        for(int j = 0; j < opaqueCount + translucentCount; j++) {
             double t = mollerTromboree(C, Cf, triangle[j]);
             if(t < 0.01f) continue;
             if(t < upTilNowClosestT) {
@@ -240,50 +154,9 @@ int main(){
             return;
         }
 
-        // placing the block
-        B[opposingBlock.z][opposingBlock.y][opposingBlock.x] = selectedMaterial.ID;
-        struct block placeMat = selectedMaterial;
-        {int highestRes = 0;
-        for(int mi = 0; mi < (int)(matCount); mi++) {
-            if(mat[mi].ID == selectedMaterial.ID && mat[mi].PixelResolution > highestRes && mat[mi].PixelResolution <= targetResolution)
-                highestRes = mat[mi].PixelResolution;
-        }
-        for(int mi = 0; mi < (int)(matCount); mi++) {
-            if(mat[mi].ID == selectedMaterial.ID && mat[mi].PixelResolution == highestRes)
-                placeMat = mat[mi];
-        }}
-        int added = buildTrianglesForBlock(triangle, B, populatedTriangleCount, opposingBlock.x, opposingBlock.y, opposingBlock.z, placeMat, mat, matCount, targetResolution);
-        populatedTriangleCount += added;
-        
-        for(int i = 0; i < populatedTriangleCount; i++) {
-                double dx = C.x - triangle[i].Center.x, dy = C.y - triangle[i].Center.y, dz = C.z - triangle[i].Center.z;
-                triangle[i].distance = dx*dx + dy*dy + dz*dz;
-            }
-            sortTrianglesByDistance(triangle, populatedTriangleCount, renderPool);
-
-        blockCount++;
-        forceDistanceAssignment = true;
-
-        // destroy the stuff
-        int writeIndex = 0;
-        for(int i = 0; i < populatedTriangleCount; i++) {
-            struct intVector c = triangle[i].associatedBlockCoordinates;
-            bool belongsToAffectedBlock =
-                (c.x == blockLocation.x     && c.y == blockLocation.y     && c.z == blockLocation.z);
-
-            if(belongsToAffectedBlock) continue;
-
-            if(writeIndex != i) triangle[writeIndex] = triangle[i];
-            writeIndex++;
-        }
-
-        for(int i = writeIndex; i < populatedTriangleCount; i++) triangle[i] = {0};
-        
-        populatedTriangleCount = writeIndex;    
-        
-        populatedTriangleCount += buildTrianglesForBlock(triangle, B, populatedTriangleCount,
-                    blockLocation.x, blockLocation.y, blockLocation.z, getMaterial(mat, matCount, B[blockLocation.z][blockLocation.y][blockLocation.x]),
-                    mat, matCount, targetResolution);
+        setBlock(triangle, opaqueCount, translucentCount, B,
+                 opposingBlock.x, opposingBlock.y, opposingBlock.z, selectedMaterial.ID,
+                 mat, matCount, blockCount);
     };
 
     auto handleCameraRotation = [&]() {
@@ -332,7 +205,7 @@ int main(){
         if(showSpeedVectors && renderOverlay)
             DrawText(TextFormat("Forward Speed: %.2f   Right Speed: %.2f    Upward Speed:   %.2f", forwardSpeed, rightSpeed, upSpeed), 10, 70, 30, BLACK);
         if(showTriangleCount && renderOverlay)
-            DrawText(TextFormat("Triangles: %d", populatedTriangleCount), GetScreenWidth()-300, 40, 30, BLACK);
+            DrawText(TextFormat("Triangles: %d", opaqueCount + translucentCount), GetScreenWidth()-300, 40, 30, BLACK);
         if(showFPS && renderOverlay)
             DrawText(TextFormat("FPS: %.2f", 1/deltaTime), GetScreenWidth()-300, 70, 30, BLACK);
         if(showBlockCount && renderOverlay)
@@ -346,8 +219,8 @@ int main(){
             if(gamemode == SPECTATOR) DrawText("Gamemode: Spectator", 10, 160, 30, BLACK);
         }
         if(showBenchmark && renderOverlay)
-            DrawText(TextFormat("Input: %.2fms   Physics: %.2fms   Dist: %.2fms   Sort: %.2fms   Proj: %.2fms   Render: %.2fms   Wait: %.2fms",
-                                timeInput, timePhysics, timeDistances, timeSort, timeProjection, timeRender, timeWait),
+            DrawText(TextFormat("Input: %.2fms   Physics: %.2fms   Proj: %.2fms   Render: %.2fms   Wait: %.2fms",
+                                timeInput, timePhysics, timeProjection, timeRender, timeWait),
                      10, 192, 20, BLACK);
         if(!renderOverlay) {
             DrawText("2x2 Parkour", 30, 30, 60, WHITE);
@@ -543,64 +416,23 @@ int main(){
             double Px, Py, Pz;
             if(sscanf(commandToBeExecuted.c_str(), "setblock %d %d %d %d", &cx, &cy, &cz, &cid) == 4 && !blockCmdOut) {
                 if(cx >= 0 && cx < worldWidth && cy >= 0 && cy < worldDepth && cz >= 0 && cz < worldHeight) {
-                    B[cz][cy][cx] = cid;
-                    struct block placeMat = mat[0];
-                    int highestRes = 0;
-                    for(int mi = 0; mi < (int)(matCount); mi++) {
-                        if(mat[mi].ID == cid && mat[mi].PixelResolution > highestRes && mat[mi].PixelResolution <= targetResolution)
-                            highestRes = mat[mi].PixelResolution;
-                    }
-                    for(int mi = 0; mi < (int)(matCount); mi++) {
-                        if(mat[mi].ID == cid && mat[mi].PixelResolution == highestRes)
-                            placeMat = mat[mi];
-                    }
-                    int added = buildTrianglesForBlock(triangle, B, populatedTriangleCount, cx, cy, cz, placeMat, mat, matCount, targetResolution);
-                    populatedTriangleCount += added;
-                    blockCount++;
-                    forceDistanceAssignment = true;
-                    if(echoCommands)printf("The block at %d %d %d was set to %s\n", cx, cy, cz, placeMat.displayName);
+                    setBlock(triangle, opaqueCount, translucentCount, B, cx, cy, cz, cid, mat, matCount, blockCount);
+                    if(echoCommands)printf("The block at %d %d %d was set to %s\n", cx, cy, cz, getMaterial(mat, matCount, cid).displayName);
                 } else {
                     printf("setblock: coordinates out of bounds (%d %d %d)\n", cx, cy, cz);
                 }blockCmdOut=true;
             }
             else if(sscanf(commandToBeExecuted.c_str(), "fill %d %d %d %d %d %d %d", &cx, &cy, &cz, &fx, &fy, &fz, &cid) == 7 && !blockCmdOut) {
-                struct block placeMat = mat[0];
-                int highestRes = 0;
-                for(int mi = 0; mi < (int)(matCount); mi++) {
-                    if(mat[mi].ID == cid && mat[mi].PixelResolution > highestRes && mat[mi].PixelResolution <= targetResolution)
-                        highestRes = mat[mi].PixelResolution;
-                }
-                for(int mi = 0; mi < (int)(matCount); mi++) {
-                    if(mat[mi].ID == cid && mat[mi].PixelResolution == highestRes)
-                        placeMat = mat[mi];
-                }
                 for(int dz = 0; dz < fz; dz++) {
                     for(int dy = 0; dy < fy; dy++) {
                         for(int dx = 0; dx < fx; dx++) {
                             int bx = cx+dx, by = cy+dy, bz = cz+dz;
                             if(bx < 0 || bx >= worldWidth || by < 0 || by >= worldDepth || bz < 0 || bz >= worldHeight) continue;
-                            if(B[bz][by][bx] != 0) {
-                                B[bz][by][bx] = 0;
-                                for(int i = 0; i < populatedTriangleCount; i++) {
-                                    if(triangle[i].associatedBlockCoordinates.x == bx &&
-                                       triangle[i].associatedBlockCoordinates.y == by &&
-                                       triangle[i].associatedBlockCoordinates.z == bz) {
-                                        populatedTriangleCount--;
-                                        triangle[i] = triangle[populatedTriangleCount];
-                                        i--;
-                                    }
-                                }
-                                blockCount--;
-                            }
-                            B[bz][by][bx] = cid;
-                            int added = buildTrianglesForBlock(triangle, B, populatedTriangleCount, bx, by, bz, placeMat, mat, matCount, targetResolution);
-                            populatedTriangleCount += added;
-                            blockCount++;
+                            setBlock(triangle, opaqueCount, translucentCount, B, bx, by, bz, cid, mat, matCount, blockCount);
                         }
                     }
                 }
-                if(echoCommands)printf("Successfully filled area with %s\n", placeMat.displayName);
-                forceDistanceAssignment = true;
+                if(echoCommands)printf("Successfully filled area with %s\n", getMaterial(mat, matCount, cid).displayName);
                 blockCmdOut=true;
             }
             else if(sscanf(commandToBeExecuted.c_str(), "tp %lf %lf %lf", &Px, &Py, &Pz) == 3 && !blockCmdOut) {
@@ -620,8 +452,8 @@ int main(){
                     snprintf(prebuiltDir, sizeof(prebuiltDir), "%sworlds/prebuilt", GetApplicationDirectory());
                     FilePathList prebuiltFiles = LoadDirectoryFiles(prebuiltDir);
                     if(worldIndex >= 0 && worldIndex < (int)prebuiltFiles.count) {
-                        int result = loadWorld(prebuiltFiles.paths[worldIndex], B, triangle, mat, matCount, blockCount);
-                        if(result >= 0) { populatedTriangleCount = result; forceDistanceAssignment = true; }
+                        int total = loadWorld(prebuiltFiles.paths[worldIndex], B, triangle, mat, matCount, blockCount, opaqueCount);
+                        if(total >= 0) translucentCount = total - opaqueCount;
                         if(echoCommands)printf("Successfully loaded the %d-th world from \\worlds\\prebuilt\\:\n%s\n", worldIndex, prebuiltFiles.paths[worldIndex]);
                     } else {
                         printf("loadworld: index %d out of range (found %u worlds in prebuilt/)\n", worldIndex, prebuiltFiles.count);
@@ -632,9 +464,9 @@ int main(){
                 else if(sscanf(commandToBeExecuted.c_str(), "loadworld \"%511[^\"]\"", worldName) == 1) {
                     char prebuiltPath[1024];
                     snprintf(prebuiltPath, sizeof(prebuiltPath), "%sworlds/prebuilt/%s", GetApplicationDirectory(), worldName);
-                    int result = loadWorld(prebuiltPath, B, triangle, mat, matCount, blockCount);
-                    if(result >= 0){
-                        populatedTriangleCount = result; forceDistanceAssignment = true;
+                    int total = loadWorld(prebuiltPath, B, triangle, mat, matCount, blockCount, opaqueCount);
+                    if(total >= 0){
+                        translucentCount = total - opaqueCount;
                         if(echoCommands)printf("Successfully loaded world: %s\n", worldName);
                     } else{
                         if(echoCommands)printf("Couldnt find world \"%s\"\n", worldName);
@@ -661,8 +493,8 @@ int main(){
         if(allowWorldSaveLoad && IsKeyPressed(KEY_F1)) saveWorld(B);
         if(Cheats && IsKeyPressed(KEY_F3)) { gamemode = (gamemode+1)%4; changeMadeToGamemode = true; }
         if(allowWorldSaveLoad && IsKeyPressed(KEY_F2)) {
-            int newCount = loadNextWorldSave(B, loadedWorldName, sizeof(loadedWorldName), worldSaveCycleIndex, triangle, mat, (int)(matCount), blockCount);
-            if(newCount >= 0) { populatedTriangleCount = newCount; forceDistanceAssignment = true; }
+            int newTotal = loadNextWorldSave(B, loadedWorldName, sizeof(loadedWorldName), worldSaveCycleIndex, triangle, mat, (int)(matCount), blockCount, opaqueCount);
+            if(newTotal >= 0) translucentCount = newTotal - opaqueCount;
         }
         if(blockBreakingRights && (IsKeyPressed(KEY_BACKSPACE) || IsMouseButtonPressed(MOUSE_BUTTON_LEFT)))
             handleBlockBreaking();
@@ -678,14 +510,12 @@ int main(){
         bool unlimitedSpeedMode = (gamemode == CREATIVE || gamemode == SPECTATOR);
         if(IsKeyDown(KEY_LEFT_CONTROL) && (!blockAllMovementInputs) && IsKeyDown(KEY_W)) {
             trueWSpeedMax = unlimitedSpeedMode ? 100.0 : (initWSpeedMax + SprintBoost);
-            realFOVHeight *= 1.05f; realFOVWidth *= 1.05f;
+            realFOVHeight *= 1.05f;
             if(realFOVHeight > FOVHeight*sprintFOVMultiplier) realFOVHeight = FOVHeight*sprintFOVMultiplier;
-            if(realFOVWidth  > FOVWidth *sprintFOVMultiplier) realFOVWidth  = FOVWidth *sprintFOVMultiplier;
         } else {
             trueWSpeedMax = initWSpeedMax;
-            realFOVHeight /= 1.1f; realFOVWidth /= 1.1f;
+            realFOVHeight /= 1.1f;
             if(realFOVHeight < FOVHeight) realFOVHeight = FOVHeight;
-            if(realFOVWidth  < FOVWidth ) realFOVWidth  = FOVWidth;
         }
 
         double scaledSlowdownFactor = slowdownFactor * deltaTime * 60.0;
@@ -752,98 +582,47 @@ int main(){
 
         timePhysics = (GetTime() - _bt) * 1000.0;
 
-        // Assign distances — recalculate when moving or when a forced sort was requested.
         _bt = GetTime();
-        if(forwardSpeed != 0.0 || rightSpeed != 0.0 || upSpeed != 0.0 || forceDistanceAssignment) {
-            for(int i = 0; i < populatedTriangleCount; i++) {
-                double dx = C.x - triangle[i].Center.x, dy = C.y - triangle[i].Center.y, dz = C.z - triangle[i].Center.z;
-                triangle[i].distance = dx*dx + dy*dy + dz*dz;
-            }
-        }
-        timeDistances = (GetTime() - _bt) * 1000.0;
 
-        // Sort triangles farthest-first for painter's algorithm
-        _bt = GetTime();
-        sortTrianglesByDistance(triangle, populatedTriangleCount, renderPool);
-        forceDistanceAssignment = false;
-        timeSort = (GetTime() - _bt) * 1000.0;
-
-        if(generalDebugMode && logTriangleDistances) {
-            printf("\n\n\n\n");
-            for(int i = 0; i < populatedTriangleCount; i++) printf("Distance: %.2f\n", triangle[i].distance);
-        }
-
-        // Project & backface-cull all triangles in parallel, before any GL calls.
-        _bt = GetTime();
-        renderPool.runParallel(populatedTriangleCount, [&](int start, int end) {
-            for(int i = start; i < end; i++) {
-                struct sextupleVector sv = GetSolutionVector(triangle[i], WindowWidth, WindowHeight, C, Cf, FOVDepth, realFOVWidth, realFOVHeight);
-
-                struct vector a1 = {sv.x1, sv.y1, 0}, a2 = {sv.x2, sv.y2, 0}, a3 = {sv.x3, sv.y3, 0};
-                struct vector edge1a = {a2.x-a1.x, a2.y-a1.y, a2.z-a1.z};
-                struct vector edge2a = {a3.x-a1.x, a3.y-a1.y, a3.z-a1.z};
-                bool visible1 = crossProduct(edge1a, edge2a).z < 0;
-
-                bool visible2 = false;
-                if(sv.x4 != 0.0) {
-                    struct vector b1 = {sv.x4, sv.y4, 0}, b2 = {sv.x5, sv.y5, 0}, b3 = {sv.x6, sv.y6, 0};
-                    struct vector edge1b = {b2.x-b1.x, b2.y-b1.y, b2.z-b1.z};
-                    struct vector edge2b = {b3.x-b1.x, b3.y-b1.y, b3.z-b1.z};
-                    visible2 = crossProduct(edge1b, edge2b).z < 0;
-                }
-
-                renderResults[i] = {sv, visible1, visible2};
-            }
-        });
+        // Build the RL camera
+        Camera3D camera = buildCamera3D(C, Cf, baseFovYDeg * (realFOVHeight / FOVHeight));
         timeProjection = (GetTime() - _bt) * 1000.0;
 
         // DRAW
         _bt = GetTime();
         BeginDrawing();
         ClearBackground(skyBackground ? Color{0x77,0xA8,0xFF,0xFF} : WHITE);
+        BeginMode3D(camera);
 
-        if(drawWorldBorder) {
-            const double bW = worldWidth, bD = worldDepth, bH = worldHeight;
-            const Color  bcol = {0, 0, 0, 255/8};
-            auto drawBorderTri = [&](struct vector p1, struct vector p2, struct vector p3) {
-                struct face bf = {}; bf.P1 = p1; bf.P2 = p2; bf.P3 = p3;
-                struct sextupleVector sv = GetSolutionVector(bf, WindowWidth, WindowHeight, C, Cf, FOVDepth, realFOVWidth, realFOVHeight);
-                DrawTriangleLines({float(sv.x1),float(sv.y1)},{float(sv.x2),float(sv.y2)},{float(sv.x3),float(sv.y3)}, bcol);
-                DrawTriangleLines({float(sv.x3),float(sv.y3)},{float(sv.x2),float(sv.y2)},{float(sv.x1),float(sv.y1)}, bcol);
-                DrawTriangleLines({float(sv.x4),float(sv.y4)},{float(sv.x5),float(sv.y5)},{float(sv.x6),float(sv.y6)}, bcol);
-                DrawTriangleLines({float(sv.x6),float(sv.y6)},{float(sv.x5),float(sv.y5)},{float(sv.x4),float(sv.y4)}, bcol);
-            };
+        if(drawWorldBorder) drawWorldBorder3D(Color{0, 0, 0, 255/8});
 
-            drawBorderTri({0,  0,  0 }, {bW, 0,  0 }, {bW, 0,  0 });  // bottom 1
-            drawBorderTri({0,  0,  0 }, {0 , bD, 0 }, {0 , bD, 0 });  // bottom 2
-            drawBorderTri({0,  bD, 0 }, {bW, bD, 0 }, {bW, bD, 0 });  // top 1
-            drawBorderTri({bW,  0, 0 }, {bW, bD, 0 }, {bW, bD, 0 });  // top 2
-
-            drawBorderTri({0,   0,  0 }, {0 ,  0,   bH}, {0 ,  0,   bH});  // back  (y=0)  1
-            drawBorderTri({bW,  0,  0 }, {bW,  0,   bH}, {bW,  0,   bH});  // back  (y=0)  2
-            drawBorderTri({0,  bD,  0 }, {0 ,  bD,  bH}, {0 ,  bD,  bH});  // front (y=bD) 1
-            drawBorderTri({bW, bD,  0 }, {bW,  bD,  bH}, {bW,  bD,  bH});  // front (y=bD) 2
-            
-            drawBorderTri({0,  0,  bH }, {bW, 0,  bH}, {bW, 0,  bH});  // bottom 1
-            drawBorderTri({0,  0,  bH }, {0 , bD, bH}, {0 , bD, bH});  // bottom 2
-            drawBorderTri({0,  bD, bH }, {bW, bD, bH}, {bW, bD, bH});  // top 1
-            drawBorderTri({bW,  0, bH }, {bW, bD, bH}, {bW, bD, bH});  // top 2
+        // Opaque pass — [0] to [opaqueCount]
+        if(drawSurfaces) {
+            for(int i = 0; i < opaqueCount; i++) {
+                drawFaceTriangle3D(triangle[i], triangle[i].Colour);
+            }
+        }
+        if(drawWireframe) {
+            for(int i = 0; i < opaqueCount; i++) drawFaceWireframe3D(triangle[i], BLACK);
         }
 
-        for(int i = 0; i < populatedTriangleCount; i++) {
-            struct RenderResult& rr = renderResults[i];
-            struct Vector2 v1={float(rr.sv.x1),float(rr.sv.y1)}, v2={float(rr.sv.x2),float(rr.sv.y2)}, v3={float(rr.sv.x3),float(rr.sv.y3)};
-            struct Vector2 v4={float(rr.sv.x4),float(rr.sv.y4)}, v5={float(rr.sv.x5),float(rr.sv.y5)}, v6={float(rr.sv.x6),float(rr.sv.y6)};
-
+        // Translucent pass [opaqueCount] to [opaqueCount + translucent]
+        if(translucentCount > 0) {
+            rlDrawRenderBatchActive();
+            rlDisableDepthMask();
             if(drawSurfaces) {
-                if(rr.visible1) DrawTriangle(v1,v2,v3,triangle[i].Colour);
-                if(rr.visible2) DrawTriangle(v4,v5,v6,triangle[i].Colour);
+                for(int i = opaqueCount; i < opaqueCount + translucentCount; i++) {
+                    drawFaceTriangle3D(triangle[i], triangle[i].Colour);
+                }
             }
             if(drawWireframe) {
-                if(rr.visible1) { DrawTriangleLines(v1,v2,v3,BLACK); DrawTriangleLines(v3,v2,v1,BLACK); }
-                if(rr.visible2) { DrawTriangleLines(v4,v5,v6,BLACK); DrawTriangleLines(v6,v5,v4,BLACK); }
+                for(int i = opaqueCount; i < opaqueCount + translucentCount; i++) drawFaceWireframe3D(triangle[i], BLACK);
             }
+            rlDrawRenderBatchActive();
+            rlEnableDepthMask();
         }
+
+        EndMode3D();
 
         drawHUD();
 

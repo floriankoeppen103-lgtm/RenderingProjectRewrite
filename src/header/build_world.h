@@ -65,7 +65,7 @@ inline int buildTrianglesFromWorld(
                         coord = {x, y, z};
 
 
-                        if(y+1<=worldDepth&&isBlockTransparent(mat, matCount, B[z][y + 1][x])){
+                        if(y+1<worldDepth&&isBlockTransparent(mat, matCount, B[z][y + 1][x])){
                         // front 1      RED     Y + 1
                         triangle[ti+0].P1 = {(double)x + col*d,       (double)y+1.0, (double)z+1.0-(row+1)*d};
                         triangle[ti+0].P2 = {(double)x + (col+1)*d,   (double)y+1.0, (double)z+1.0-row*d};
@@ -144,7 +144,7 @@ inline int buildTrianglesFromWorld(
                         
 
 
-                        if(x+1<=worldWidth&&isBlockTransparent(mat, matCount, B[z][y][x + 1])){    
+                        if(x+1<worldWidth&&isBlockTransparent(mat, matCount, B[z][y][x + 1])){    
                         // right 1      BLACK   X + 1
                         triangle[ti+0].P1 = {(double)x+1.0, (double)y + col*d,     (double)z+1.0-(row+1)*d};
                         triangle[ti+0].P2 = {(double)x+1.0, (double)y + (col+1)*d, (double)z+1.0-(row+1)*d};
@@ -170,7 +170,7 @@ inline int buildTrianglesFromWorld(
                         
 
 
-                        if(z+1<=worldHeight&&isBlockTransparent(mat, matCount, B[z + 1][y][x])){    
+                        if(z+1<worldHeight&&isBlockTransparent(mat, matCount, B[z + 1][y][x])){    
                         // top 1        WHITE   Z + 1
                         triangle[ti+0].P1 = {(double)x+1.0-(row+1)*d, (double)y + col*d,     (double)z+1.0};
                         triangle[ti+0].P2 = {(double)x+1.0-row*d,     (double)y + (col+1)*d, (double)z+1.0};
@@ -246,7 +246,7 @@ inline int buildTrianglesForBlock(
     int ti = startIndex;
     struct intVector coord = {x, y, z};
 
-    if(x<0||x>worldWidth||y<0||y>worldDepth||z<0||z>worldHeight){return 0;}
+    if(x<0||x>=worldWidth||y<0||y>=worldDepth||z<0||z>=worldHeight){return 0;}
 
     for(int row = 0; row < resolution; row++) {
         for(int col = 0; col < resolution; col++){
@@ -254,7 +254,7 @@ inline int buildTrianglesForBlock(
             coord = {x, y, z};
 
 
-            if(y+1<=worldDepth&&isBlockTransparent(mat, matCount, B[z][y + 1][x])){
+            if(y+1<worldDepth&&isBlockTransparent(mat, matCount, B[z][y + 1][x])){
                 // front 1      RED     Y + 1
                 triangle[ti+0].P1 = {(double)x + col*d,       (double)y+1.0, (double)z+1.0-(row+1)*d};
                 triangle[ti+0].P2 = {(double)x + (col+1)*d,   (double)y+1.0, (double)z+1.0-row*d};
@@ -333,7 +333,7 @@ inline int buildTrianglesForBlock(
                         
 
 
-            if(x+1<=worldWidth&&isBlockTransparent(mat, matCount, B[z][y][x + 1])){    
+            if(x+1<worldWidth&&isBlockTransparent(mat, matCount, B[z][y][x + 1])){    
                 // right 1      BLACK   X + 1
                 triangle[ti+0].P1 = {(double)x+1.0, (double)y + col*d,     (double)z+1.0-(row+1)*d};
                 triangle[ti+0].P2 = {(double)x+1.0, (double)y + (col+1)*d, (double)z+1.0-(row+1)*d};
@@ -359,7 +359,7 @@ inline int buildTrianglesForBlock(
                         
 
 
-            if(z+1<=worldHeight&&isBlockTransparent(mat, matCount, B[z + 1][y][x])){    
+            if(z+1<worldHeight&&isBlockTransparent(mat, matCount, B[z + 1][y][x])){    
                 // top 1        WHITE   Z + 1
                 triangle[ti+0].P1 = {(double)x+1.0-(row+1)*d, (double)y + col*d,     (double)z+1.0};
                 triangle[ti+0].P2 = {(double)x+1.0-row*d,     (double)y + (col+1)*d, (double)z+1.0};
@@ -503,6 +503,108 @@ inline int buildTrianglesForBlock(
     }
 
     return ti - startIndex;
+}
+
+// Partitions triangle[0, count) so opaque faces (alpha == 255) come first,
+// followed by translucent faces. One-time O(count) operation used after a
+// full rebuild (initial load, F2 world switch). Returns the opaque count;
+// the translucent count is (count - returned value).
+inline int partitionTriangles(struct face* triangle, int count) {
+    int lo = 0, hi = count;
+    while(lo < hi) {
+        if(triangle[lo].Colour.a == 255) {
+            lo++;
+        } else {
+            hi--;
+            struct face tmp = triangle[lo];
+            triangle[lo] = triangle[hi];
+            triangle[hi] = tmp;
+        }
+    }
+    return lo;
+}
+
+// Inserts face f into triangle[], keeping triangle[0, opaqueCount) opaque and
+// triangle[opaqueCount, opaqueCount+translucentCount) translucent. O(1).
+inline void insertFace(struct face* triangle, int& opaqueCount, int& translucentCount, const struct face& f) {
+    if(f.Colour.a == 255) {
+        triangle[opaqueCount + translucentCount] = triangle[opaqueCount];
+        triangle[opaqueCount] = f;
+        opaqueCount++;
+    } else {
+        triangle[opaqueCount + translucentCount] = f;
+        translucentCount++;
+    }
+}
+
+// Removes the face at index i, swapping in the last face of its region
+// (opaque or translucent) to keep both regions contiguous. O(1).
+inline void removeFaceAt(struct face* triangle, int& opaqueCount, int& translucentCount, int i) {
+    if(i < opaqueCount) {
+        triangle[i] = triangle[opaqueCount - 1];
+        if(translucentCount > 0)
+            triangle[opaqueCount - 1] = triangle[opaqueCount + translucentCount - 1];
+        opaqueCount--;
+    } else {
+        triangle[i] = triangle[opaqueCount + translucentCount - 1];
+        translucentCount--;
+    }
+}
+
+// Removes every face whose associatedBlockCoordinates matches one of coords[0..coordCount).
+inline void removeFacesForBlocks(struct face* triangle, int& opaqueCount, int& translucentCount,
+                                  const struct intVector* coords, int coordCount) {
+    int i = 0;
+    while(i < opaqueCount + translucentCount) {
+        struct intVector c = triangle[i].associatedBlockCoordinates;
+        bool match = false;
+        for(int k = 0; k < coordCount; k++) {
+            if(c.x == coords[k].x && c.y == coords[k].y && c.z == coords[k].z) { match = true; break; }
+        }
+        if(match) removeFaceAt(triangle, opaqueCount, translucentCount, i);
+        else i++;
+    }
+}
+
+// Builds the faces for block (x,y,z) and inserts each into triangle[] via insertFace.
+inline void placeBlockFaces(struct face* triangle, int& opaqueCount, int& translucentCount,
+                             int B[][worldDepth][worldWidth],
+                             int x, int y, int z, const struct block& matToPlaceHere,
+                             const struct block* mat, int matCount) {
+    struct face scratch[12 * targetResolution * targetResolution];
+    int n = buildTrianglesForBlock(scratch, B, 0, x, y, z, matToPlaceHere, mat, matCount, targetResolution);
+    for(int i = 0; i < n; i++) insertFace(triangle, opaqueCount, translucentCount, scratch[i]);
+}
+
+// Sets B[z][y][x] = blockID and rebuilds the faces of that block plus all
+// in-bounds neighbors, so faces hidden or exposed by the change stay correct.
+// The single entry point for block breaking/placing and the setblock/fill commands.
+inline void setBlock(struct face* triangle, int& opaqueCount, int& translucentCount,
+                      int B[][worldDepth][worldWidth], int x, int y, int z, int blockID,
+                      const struct block* mat, int matCount, int& blockCount) {
+    if(B[z][y][x] == blockID) return;
+
+    struct intVector coords[7];
+    int coordCount = 0;
+    coords[coordCount++] = {x, y, z};
+    static const int dx[] = {1,-1,0,0,0,0}, dy[] = {0,0,1,-1,0,0}, dz[] = {0,0,0,0,1,-1};
+    for(int n = 0; n < 6; n++) {
+        int nx = x+dx[n], ny = y+dy[n], nz = z+dz[n];
+        if(nx>=0 && nx<worldWidth && ny>=0 && ny<worldDepth && nz>=0 && nz<worldHeight)
+            coords[coordCount++] = {nx, ny, nz};
+    }
+
+    if(B[z][y][x] != 0) blockCount--;
+    if(blockID     != 0) blockCount++;
+
+    removeFacesForBlocks(triangle, opaqueCount, translucentCount, coords, coordCount);
+    B[z][y][x] = blockID;
+
+    for(int k = 0; k < coordCount; k++) {
+        int bx = coords[k].x, by = coords[k].y, bz = coords[k].z;
+        int id = B[bz][by][bx];
+        if(id != 0) placeBlockFaces(triangle, opaqueCount, translucentCount, B, bx, by, bz, getMaterial(mat, matCount, id), mat, matCount);
+    }
 }
 
 #endif // BUILD_WORLD_H

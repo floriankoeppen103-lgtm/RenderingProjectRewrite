@@ -8,14 +8,16 @@
 #include "build_world.h"
 
 // Loads a world binary from binPath into B, rebuilds triangle[], recounts blocks.
-// Returns the new populatedTriangleCount, or -1 if the file couldn't be opened.
+// Returns the new total triangle count (opaqueCount + translucentCount), or -1
+// if the file couldn't be opened. opaqueCount is set via partitionTriangles.
 inline int loadWorld(
     const char* binPath,
     int B[][worldDepth][worldWidth],
     struct face* triangle,
     const struct block* mat,
     int matCount,
-    int& blockCount
+    int& blockCount,
+    int& opaqueCount
 ) {
     FILE* f = fopen(binPath, "rb");
     if(!f) {
@@ -41,6 +43,7 @@ inline int loadWorld(
     int count = buildTrianglesFromWorld(
         triangle, B, mat, matCount, targetResolution
     );
+    opaqueCount = partitionTriangles(triangle, count);
 
     blockCount = 0;
     for(int i = 0; i < worldHeight; i++)
@@ -54,7 +57,7 @@ inline int loadWorld(
 // Advances worldSaveCycleIndex to the next existing save in src/worlds/saves/,
 // calls loadWorld(), and updates loadedWorldName.
 // Wraps back to 1 if the next index has no file.
-// Returns the new populatedTriangleCount, or -1 if no saves exist at all.
+// Returns the new total triangle count, or -1 if no saves exist at all.
 inline int loadNextWorldSave(
     int B[][worldDepth][worldWidth],
     char* loadedWorldName,
@@ -63,7 +66,8 @@ inline int loadNextWorldSave(
     struct face* triangle,
     const struct block* mat,
     int matCount,
-    int& blockCount
+    int& blockCount,
+    int& opaqueCount
 ) {
     char saveBinPath[512];
 
@@ -93,7 +97,7 @@ inline int loadNextWorldSave(
              "%sworlds/saves/world_data%d.bin", GetApplicationDirectory(), found);
     snprintf(loadedWorldName, nameBufferSize, "world_data%d", found);
 
-    int newCount = loadWorld(saveBinPath, B, triangle, mat, matCount, blockCount);
+    int newCount = loadWorld(saveBinPath, B, triangle, mat, matCount, blockCount, opaqueCount);
     if(newCount >= 0)
         printf("Loaded world_data%d -- %d blocks, %d triangles.\n",
                found, blockCount, newCount);

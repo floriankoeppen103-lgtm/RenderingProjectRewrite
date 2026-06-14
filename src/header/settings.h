@@ -27,8 +27,8 @@ constexpr bool skyBackground            = true;         // Light blue sky backgr
 constexpr bool drawWireframe            = false;        // Draw triangle wireframe
 constexpr bool drawSurfaces             = true;         // Fill triangles with color
 constexpr bool drawWorldBorder          = true;         // Draws a thin worldborder
-          bool doCulling                = true;         // doesnt draw hidden faces
 constexpr bool doTestColors             = false;         // draws each face in a clear color
+constexpr double baseFovYDeg            = 70.0f;        // Vertical FOV (degrees) passed to raylib's Camera3D
 
 // OVERLAY SETTINGS
 constexpr bool renderOverlay       = true;   // Toggle the whole screen overlay
@@ -56,20 +56,18 @@ constexpr double Theta = -1.7f;  // Camera turn speed left/right (keyboard)
 constexpr double upTa  =  1.0f;  // Camera look speed up/down (keyboard)
 
 // MOVEMENT SETTINGS
-constexpr double SprintBoost            =  7.0f;   // Speed boost while sprinting (additive)
+constexpr double SprintBoost            =  5.0f;   // Speed boost while sprinting (additive)
 constexpr double generalSpeedMultiplier =  0.5f;   // Global speed scale
 constexpr double speedupFactor          =  0.80f;  // How quickly you accelerate
 constexpr double slowdownFactor         =  0.50f;  // How slippery the ground is
-constexpr double initWSpeedMax          =  10.0f;  // Max speed forwards
-constexpr double SSpeedMax              = -10.0f;  // Max speed backwards
-constexpr double DSpeedMax              =  10.0f;  // Max speed right
-constexpr double ASpeedMax              = -10.0f;  // Max speed left
+constexpr double initWSpeedMax          =  8.0f;  // Max speed forwards
+constexpr double SSpeedMax              = -7.0f;  // Max speed backwards
+constexpr double DSpeedMax              =  8.0f;  // Max speed right
+constexpr double ASpeedMax              = -8.0f;  // Max speed left
 constexpr double SpaceSpeedMax          =  12.0f;  // Max speed upward
 constexpr double ShiftSpeedMax          = -10.0f;  // Max speed downward
 
 // DEBUGGING MODE - LOGGING
-constexpr bool generalDebugMode      = false;  // Enable debug mode
 constexpr bool logCamVectors         = false;  // Log camera vectors each frame
-constexpr bool logTriangleDistances  = false;  // Log triangle distances each frame
 
 #endif

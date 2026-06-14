@@ -1,3 +1,6 @@
+# More performative rewrite of the RenderingProject. Leans much more heavily on raylib Functions + GPU automation.
+
+
 # How to use:
 ## If you want to play: 
 Just clone the repo and open the executable.
